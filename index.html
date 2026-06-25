@@ -99,11 +99,11 @@
   .empty { padding: 60px 22px; color: var(--muted); }
 
   /* detail drawer */
-  .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
+  .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; z-index: 50; }
   .drawer {
     position: fixed; top: 0; right: 0; height: 100%; width: min(620px, 92vw);
     background: #fff; border-left: 1px solid var(--line-strong); display: none;
-    flex-direction: column;
+    flex-direction: column; z-index: 51;
   }
   .drawer header { padding: 14px 18px; border-bottom: 1px solid var(--line);
     display: flex; justify-content: space-between; align-items: center; }
