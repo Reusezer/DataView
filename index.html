@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataView</title>
+<style>
+  :root {
+    --line: #d9d9d9;
+    --line-strong: #111;
+    --muted: #6b6b6b;
+    --bg-soft: #f6f6f6;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    color: #111; background: #fff; font-size: 14px; line-height: 1.45;
+    display: grid; grid-template-columns: 264px 1fr; height: 100vh;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* sidebar */
+  aside {
+    border-right: 1px solid var(--line); padding: 18px 16px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  aside h1 { font-size: 15px; letter-spacing: .14em; text-transform: uppercase;
+    margin: 0; font-weight: 600; }
+  .add { display: flex; flex-direction: column; gap: 7px; }
+  .add input {
+    border: 1px solid var(--line-strong); padding: 7px 8px; font-size: 12.5px;
+    font-family: inherit; width: 100%; background: #fff;
+  }
+  button {
+    font-family: inherit; font-size: 12.5px; border: 1px solid var(--line-strong);
+    background: #fff; color: #111; padding: 6px 10px; cursor: pointer;
+  }
+  button:hover { background: #111; color: #fff; }
+  button:disabled { opacity: .4; cursor: default; background: #fff; color: #111; }
+
+  .lib { list-style: none; margin: 0; padding: 0; }
+  .lib li {
+    border: 1px solid var(--line); border-bottom: none; padding: 9px 10px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .lib li:last-child { border-bottom: 1px solid var(--line); }
+  .lib li:hover { background: var(--bg-soft); }
+  .lib li.active { border-color: var(--line-strong); background: #111; color: #fff; }
+  .lib li.active .sub { color: #bbb; }
+  .lib .name { font-size: 12.5px; word-break: break-all; }
+  .lib .sub { font-size: 11px; color: var(--muted); }
+
+  /* main */
+  main { overflow: hidden; display: flex; flex-direction: column; }
+  .topbar { padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  .topbar .title { font-size: 16px; font-weight: 600; word-break: break-all; }
+  .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .controls { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  select, .controls input {
+    border: 1px solid var(--line-strong); padding: 6px 8px; font-family: inherit;
+    font-size: 12.5px; background: #fff;
+  }
+  .controls input.search { width: 280px; }
+  .banner {
+    margin-top: 12px; border: 1px solid var(--line-strong); padding: 8px 12px;
+    font-size: 12.5px; display: flex; gap: 14px; align-items: center; justify-content: space-between;
+  }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  .scroll { overflow: auto; flex: 1; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  thead th {
+    position: sticky; top: 0; background: #fff; text-align: left; font-weight: 600;
+    border-bottom: 2px solid var(--line-strong); padding: 7px 10px; white-space: nowrap;
+    z-index: 1;
+  }
+  thead th .dt { display: block; font-weight: 400; color: var(--muted); font-size: 10.5px; }
+  tbody td {
+    border-bottom: 1px solid var(--line); padding: 6px 10px; vertical-align: top;
+    max-width: 380px;
+  }
+  tbody td .cell {
+    max-height: 4.4em; overflow: hidden; white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  }
+  tbody tr:hover { background: var(--bg-soft); cursor: pointer; }
+  td.idx { color: var(--muted); text-align: right; user-select: none; width: 1%;
+    font-family: ui-monospace, monospace; }
+  .null { color: #bbb; font-style: italic; }
+
+  .pager { padding: 12px 22px; border-top: 1px solid var(--line); display: flex;
+    align-items: center; gap: 12px; font-size: 12.5px; }
+  .pager .spacer { flex: 1; }
+
+  /* stats */
+  .stats table { font-size: 12px; }
+  .stats td, .stats th { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  .empty { padding: 60px 22px; color: var(--muted); }
+
+  /* detail drawer */
+  .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100%; width: min(620px, 92vw);
+    background: #fff; border-left: 1px solid var(--line-strong); display: none;
+    flex-direction: column;
+  }
+  .drawer header { padding: 14px 18px; border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center; }
+  .drawer .body { overflow: auto; padding: 14px 18px; }
+  .kv { margin-bottom: 14px; }
+  .kv .k { font-weight: 600; font-size: 12px; }
+  .kv .v { white-space: pre-wrap; word-break: break-word; font-size: 12.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--bg-soft); border: 1px solid var(--line); padding: 8px; margin-top: 4px; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: #111; color: #fff; padding: 9px 16px; font-size: 12.5px; display: none; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>DataView</h1>
+  <div class="add">
+    <input id="repoInput" placeholder="owner/dataset-name" autocomplete="off" spellcheck="false">
+    <button id="addBtn">Add dataset</button>
+  </div>
+  <ul class="lib" id="lib"></ul>
+</aside>
+
+<main>
+  <div id="main-empty" class="empty">Add a dataset on the left, or pick one to view.</div>
+
+  <div id="main-view" style="display:none; height:100%; flex-direction:column; overflow:hidden;">
+    <div class="topbar">
+      <div class="title" id="ds-title"></div>
+      <div class="meta" id="ds-meta"></div>
+      <div id="ds-banner"></div>
+      <div class="controls">
+        <select id="tableSel"></select>
+        <input class="search" id="searchInput" placeholder="search all columns…">
+        <button id="searchBtn">Search</button>
+        <button id="clearBtn">Clear</button>
+        <span class="spacer" style="flex:1"></span>
+        <button id="statsBtn">Stats</button>
+        <button id="refreshBtn">Check / refresh</button>
+        <button id="removeBtn">Remove</button>
+      </div>
+      <div class="note" id="ds-note"></div>
+    </div>
+
+    <div class="scroll" id="tableWrap"></div>
+
+    <div class="pager">
+      <button id="prevBtn">Prev</button>
+      <button id="nextBtn">Next</button>
+      <span id="pageInfo" class="mono"></span>
+      <span class="spacer"></span>
+      <label>Rows
+        <select id="pageSize">
+          <option>25</option><option selected>50</option><option>100</option><option>200</option>
+        </select>
+      </label>
+    </div>
+  </div>
+</main>
+
+<div class="drawer-bg" id="drawerBg"></div>
+<div class="drawer" id="drawer">
+  <header><strong>Row detail</strong><button id="drawerClose">Close</button></header>
+  <div class="body" id="drawerBody"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = { repo: null, table: null, columns: [], offset: 0, limit: 50, q: "", rows: [] };
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._t); t._t = setTimeout(() => t.style.display = "none", 2600);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+  return r.json();
+}
+
+// ---- library ----
+async function loadLibrary() {
+  const lib = await api("/api/library");
+  const ul = $("#lib"); ul.innerHTML = "";
+  if (!lib.length) ul.innerHTML = `<li style="cursor:default" class="sub">No datasets yet.</li>`;
+  for (const e of lib) {
+    const li = document.createElement("li");
+    if (e.repo_id === state.repo) li.classList.add("active");
+    li.innerHTML = `<span class="name">${e.repo_id}</span>
+      <span class="sub">${e.downloaded ? "downloaded" : "not downloaded"}${e.added_at ? " · " + e.added_at : ""}</span>`;
+    li.onclick = () => openDataset(e.repo_id);
+    ul.appendChild(li);
+  }
+}
+
+$("#addBtn").onclick = async () => {
+  const repo = $("#repoInput").value.trim();
+  if (!repo) return;
+  $("#addBtn").disabled = true; $("#addBtn").textContent = "Downloading…";
+  try {
+    await api("/api/library", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo_id: repo }) });
+    $("#repoInput").value = "";
+    await loadLibrary();
+    openDataset(repo);
+    toast("Added " + repo);
+  } catch (e) { toast(e.message); }
+  $("#addBtn").disabled = false; $("#addBtn").textContent = "Add dataset";
+};
+$("#repoInput").addEventListener("keydown", e => { if (e.key === "Enter") $("#addBtn").click(); });
+
+// ---- open dataset ----
+async function openDataset(repo) {
+  state.repo = repo; state.q = ""; state.offset = 0;
+  $("#searchInput").value = "";
+  $("#main-empty").style.display = "none";
+  $("#main-view").style.display = "flex";
+  $("#ds-title").textContent = repo;
+  $("#ds-banner").innerHTML = "";
+  $("#tableWrap").innerHTML = `<div class="empty">Loading…</div>`;
+  await loadLibrary();
+  let tables;
+  try { tables = await api(`/api/dataset/${repo}/tables`); }
+  catch (e) { $("#tableWrap").innerHTML = `<div class="empty">${e.message}</div>`; return; }
+  const sel = $("#tableSel"); sel.innerHTML = "";
+  for (const t of tables) {
+    const o = document.createElement("option");
+    o.value = t.key;
+    o.textContent = `${t.label}  (${t.true_total.toLocaleString()} rows × ${t.columns.length})`;
+    o._t = t; sel.appendChild(o);
+  }
+  sel.onchange = () => selectTable(sel.value);
+  selectTable(tables[0].key, tables[0]);
+  checkUpdate(repo);
+}
+
+function selectTable(key, tObj) {
+  state.table = key; state.offset = 0; state.q = ""; $("#searchInput").value = "";
+  const t = tObj || [...$("#tableSel").options].find(o => o.value === key)._t;
+  let note = `${t.ext.slice(1).toUpperCase()} · ${t.columns.length} columns`;
+  if (t.truncated) note += ` · showing first ${t.rows_loaded.toLocaleString()} of ${t.true_total.toLocaleString()} rows (capped for speed)`;
+  $("#ds-note").textContent = note;
+  loadRows();
+}
+
+// ---- update check ----
+async function checkUpdate(repo) {
+  try {
+    const u = await api(`/api/library/${repo}/check`);
+    const b = $("#ds-banner");
+    if (u.update_available) {
+      b.innerHTML = `<div class="banner"><span>An update is available on Hugging Face.</span>
+        <button id="doRefresh">Download update</button></div>`;
+      $("#doRefresh").onclick = () => doRefresh(repo);
+    } else {
+      b.innerHTML = "";
+      $("#ds-meta").textContent = "Up to date with Hugging Face.";
+    }
+  } catch (e) { /* offline / private edge — silent */ }
+}
+async function doRefresh(repo) {
+  toast("Downloading update…");
+  try { await api(`/api/library/${repo}/refresh`, { method: "POST" }); toast("Updated."); openDataset(repo); }
+  catch (e) { toast(e.message); }
+}
+$("#refreshBtn").onclick = () => doRefresh(state.repo);
+
+$("#removeBtn").onclick = async () => {
+  if (!state.repo) return;
+  const del = confirm(`Remove "${state.repo}" from the library?\n\nClick OK to also delete its downloaded files, Cancel to keep them on disk.`);
+  try {
+    await api(`/api/library/${state.repo}?delete_files=${del}`, { method: "DELETE" });
+    state.repo = null; $("#main-view").style.display = "none"; $("#main-empty").style.display = "block";
+    loadLibrary(); toast("Removed.");
+  } catch (e) { toast(e.message); }
+};
+
+// ---- rows ----
+async function loadRows() {
+  $("#tableWrap").innerHTML = `<div class="empty">Loading…</div>`;
+  const p = new URLSearchParams({ table: state.table, offset: state.offset, limit: state.limit, q: state.q });
+  let data;
+  try { data = await api(`/api/dataset/${state.repo}/rows?${p}`); }
+  catch (e) { $("#tableWrap").innerHTML = `<div class="empty">${e.message}</div>`; return; }
+  state.columns = data.columns; state.rows = data.rows; state.matched = data.matched;
+  renderTable(data); renderPager(data);
+}
+
+function fmtCell(v) {
+  if (v === null || v === undefined) return `<span class="null">null</span>`;
+  let s = (typeof v === "object") ? JSON.stringify(v) : String(v);
+  return `<div class="cell">${escapeHtml(s)}</div>`;
+}
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+function renderTable(data) {
+  if (!data.rows.length) { $("#tableWrap").innerHTML = `<div class="empty">No rows.</div>`; return; }
+  let h = "<table><thead><tr><th>#</th>";
+  for (const c of data.columns) h += `<th>${escapeHtml(c)}</th>`;
+  h += "</tr></thead><tbody>";
+  data.rows.forEach((row, i) => {
+    h += `<tr data-i="${i}"><td class="idx">${state.offset + i}</td>`;
+    for (const v of row) h += `<td>${fmtCell(v)}</td>`;
+    h += "</tr>";
+  });
+  h += "</tbody></table>";
+  $("#tableWrap").innerHTML = h;
+  $("#tableWrap").querySelectorAll("tbody tr").forEach(tr =>
+    tr.onclick = () => openDrawer(+tr.dataset.i));
+}
+
+function renderPager(data) {
+  const end = Math.min(state.offset + state.limit, data.matched);
+  let info = `${data.matched ? state.offset + 1 : 0}–${end} of ${data.matched.toLocaleString()}`;
+  if (data.filtered) info += ` matching "${state.q}"`;
+  $("#pageInfo").textContent = info;
+  $("#prevBtn").disabled = state.offset <= 0;
+  $("#nextBtn").disabled = end >= data.matched;
+}
+$("#prevBtn").onclick = () => { state.offset = Math.max(0, state.offset - state.limit); loadRows(); };
+$("#nextBtn").onclick = () => { state.offset += state.limit; loadRows(); };
+$("#pageSize").onchange = e => { state.limit = +e.target.value; state.offset = 0; loadRows(); };
+
+$("#searchBtn").onclick = () => { state.q = $("#searchInput").value.trim(); state.offset = 0; loadRows(); };
+$("#searchInput").addEventListener("keydown", e => { if (e.key === "Enter") $("#searchBtn").click(); });
+$("#clearBtn").onclick = () => { state.q = ""; $("#searchInput").value = ""; state.offset = 0; loadRows(); };
+
+// ---- drawer (row detail) ----
+function openDrawer(i) {
+  const row = state.rows[i];
+  let h = "";
+  state.columns.forEach((c, j) => {
+    const v = row[j];
+    const val = (v === null || v === undefined) ? "null"
+      : (typeof v === "object") ? JSON.stringify(v, null, 2) : String(v);
+    h += `<div class="kv"><div class="k">${escapeHtml(c)}</div><div class="v">${escapeHtml(val)}</div></div>`;
+  });
+  $("#drawerBody").innerHTML = h;
+  $("#drawer").querySelector("header strong").textContent = "Row detail";
+  $("#drawer").style.display = "flex"; $("#drawerBg").style.display = "block";
+}
+function closeDrawer() { $("#drawer").style.display = "none"; $("#drawerBg").style.display = "none"; }
+$("#drawerClose").onclick = closeDrawer; $("#drawerBg").onclick = closeDrawer;
+
+// ---- stats ----
+$("#statsBtn").onclick = async () => {
+  let s;
+  try { s = await api(`/api/dataset/${state.repo}/stats?table=${encodeURIComponent(state.table)}`); }
+  catch (e) { toast(e.message); return; }
+  let h = `<div class="kv"><div class="k">${s.rows.toLocaleString()} rows loaded`
+    + (s.truncated ? ` (of ${s.true_total.toLocaleString()} total — stats on the loaded sample)` : "")
+    + `</div></div><div class="stats"><table><thead><tr><th>column</th><th>type</th><th>non-null</th><th>nulls</th><th>detail</th></tr></thead><tbody>`;
+  for (const c of s.columns) {
+    let detail = "";
+    if (c.mean !== undefined) detail = `min ${c.min} · max ${c.max} · mean ${c.mean}`;
+    else if (c.unique !== undefined) {
+      detail = `${c.unique} unique`;
+      if (c.top && c.top.length) detail += " · top: " + c.top.map(t => `${escapeHtml(t.value).slice(0,24)} (${t.count})`).join(", ");
+    }
+    h += `<tr><td>${escapeHtml(c.name)}</td><td class="mono">${c.dtype}</td><td>${c.non_null}</td><td>${c.nulls}</td><td>${detail}</td></tr>`;
+  }
+  h += "</tbody></table></div>";
+  $("#drawerBody").innerHTML = h;
+  $("#drawer").querySelector("header strong").textContent = "Column stats";
+  $("#drawer").style.display = "flex"; $("#drawerBg").style.display = "block";
+};
+
+loadLibrary();
+</script>
+</body>
+</html>

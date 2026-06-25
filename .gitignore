@@ -1,0 +1,20 @@
+# Everything under data/ is local: downloaded datasets, the library index,
+# the HF cache, logs. Never commit any of it (keeps your HF data + token out).
+/data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets / env
+.env
+*.token
+hf_token*
+
+# macOS / editors
+.DS_Store
+*.log
+.idea/
+.vscode/
