@@ -74,6 +74,14 @@
   .topbar { padding: 16px 22px; border-bottom: 1px solid var(--line); }
   .topbar .title { font-size: 16px; font-weight: 600; word-break: break-all; }
   .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .desc { font-size: 13px; margin-top: 8px; max-width: 780px; }
+  .desc .text { white-space: pre-wrap; }
+  .desc .addlink, .desc .editlink { color: var(--muted); cursor: pointer;
+    text-decoration: underline; font-size: 11.5px; }
+  .desc .editlink { margin-left: 10px; }
+  .desc textarea { width: 100%; max-width: 780px; min-height: 54px; border: 1px solid var(--line-strong);
+    font-family: inherit; font-size: 12.5px; padding: 7px; resize: vertical; display: block; }
+  .desc .row { display: flex; gap: 8px; margin-top: 6px; }
   .controls { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
   select, .controls input {
     border: 1px solid var(--line-strong); padding: 6px 8px; font-family: inherit;
@@ -159,6 +167,7 @@
     <div class="topbar">
       <div class="title" id="ds-title"></div>
       <div class="meta" id="ds-meta"></div>
+      <div class="desc" id="ds-desc"></div>
       <div id="ds-banner"></div>
       <div class="controls">
         <select id="tableSel"></select>
@@ -199,7 +208,9 @@
 <script>
 const $ = s => document.querySelector(s);
 const state = { source: "hf", repo: null, table: null, vaultPath: null,
-                columns: [], offset: 0, limit: 50, q: "", rows: [] };
+                columns: [], offset: 0, limit: 50, q: "", rows: [], desc: "" };
+let libCache = [];          // HF library entries (with desc)
+let vaultIndex = {};        // vault file path -> dataset entry (with desc)
 
 // show/hide controls that only make sense for one source
 function setControls(source) {
@@ -222,11 +233,13 @@ async function api(path, opts) {
 // ---- library ----
 async function loadLibrary() {
   const lib = await api("/api/library");
+  libCache = lib;
   const ul = $("#lib"); ul.innerHTML = "";
   if (!lib.length) ul.innerHTML = `<li style="cursor:default" class="sub">No datasets yet.</li>`;
   for (const e of lib) {
     const li = document.createElement("li");
     if (e.repo_id === state.repo) li.classList.add("active");
+    if (e.desc) li.title = e.desc;
     li.innerHTML = `<span class="name">${e.repo_id}</span>
       <span class="sub">${e.downloaded ? "downloaded" : "not downloaded"}${e.added_at ? " · " + e.added_at : ""}</span>`;
     li.onclick = () => openDataset(e.repo_id);
@@ -261,6 +274,8 @@ async function openDataset(repo) {
   $("#main-view").style.display = "flex";
   $("#ds-title").textContent = repo;
   $("#ds-meta").textContent = "";
+  state.desc = (libCache.find(e => e.repo_id === repo) || {}).desc || "";
+  renderDesc();
   $("#ds-banner").innerHTML = "";
   $("#tableWrap").innerHTML = `<div class="empty">Loading…</div>`;
   await loadLibrary();
@@ -335,16 +350,19 @@ async function loadVault() {
     return;
   }
   if (!tree.categories.length) { box.innerHTML = `<div class="sub" style="font-size:11px">Empty.</div>`; return; }
+  vaultIndex = {};
   let h = "";
   for (const cat of tree.categories) {
     h += `<div class="vcat">${escapeHtml(cat.name)}</div>`;
     for (const proj of cat.projects) {
       h += `<div class="vproj">${escapeHtml(proj.name)}</div>`;
       for (const ds of proj.datasets) {
+        vaultIndex[ds.file] = ds;
         const meta = [ds.rows != null ? ds.rows.toLocaleString() + " rows" : ds.format,
                       fmtBytes(ds.bytes)].filter(Boolean).join(" · ");
         const tag = ds.present ? "" : `<span class="tag">fetch</span>`;
-        h += `<div class="vds${ds.present ? "" : " absent"}" data-path="${escapeHtml(ds.file)}" data-present="${ds.present}">
+        const title = ds.desc ? ` title="${escapeHtml(ds.desc)}"` : "";
+        h += `<div class="vds${ds.present ? "" : " absent"}" data-path="${escapeHtml(ds.file)}" data-present="${ds.present}"${title}>
           <span class="vname">${escapeHtml(ds.name)}${tag}</span>
           <span class="vmeta">${escapeHtml(meta)}</span></div>`;
       }
@@ -380,9 +398,51 @@ function openVaultDataset(path) {
   $("#main-view").style.display = "flex";
   $("#ds-title").textContent = path;
   $("#ds-meta").textContent = "From the vault";
+  state.desc = (vaultIndex[path] || {}).desc || "";
+  renderDesc();
   $("#ds-banner").innerHTML = "";
   $("#ds-note").textContent = "";
   loadRows();
+}
+
+// ---- description (editable) ----
+function renderDesc() {
+  const el = $("#ds-desc");
+  if (state.desc) {
+    el.innerHTML = `<span class="text"></span><span class="editlink">edit</span>`;
+    el.querySelector(".text").textContent = state.desc;
+    el.querySelector(".editlink").onclick = editDesc;
+  } else {
+    el.innerHTML = `<span class="addlink">+ Add a description</span>`;
+    el.querySelector(".addlink").onclick = editDesc;
+  }
+}
+function editDesc() {
+  const el = $("#ds-desc");
+  el.innerHTML = `<textarea id="descArea" placeholder="What is this dataset? What's in each row?"></textarea>
+    <div class="row"><button id="descSave">Save</button><button id="descCancel">Cancel</button></div>`;
+  const area = $("#descArea"); area.value = state.desc || ""; area.focus();
+  $("#descCancel").onclick = renderDesc;
+  $("#descSave").onclick = () => saveDesc(area.value.trim());
+}
+async function saveDesc(text) {
+  try {
+    if (state.source === "vault") {
+      const r = await api("/api/vault/describe", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: state.vaultPath, desc: text }) });
+      if (vaultIndex[state.vaultPath]) vaultIndex[state.vaultPath].desc = text;
+      toast(r.synced ? "Saved & synced." : "Saved locally (push failed).");
+      loadVault();
+    } else {
+      await api(`/api/library/${state.repo}/describe`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ desc: text }) });
+      const e = libCache.find(e => e.repo_id === state.repo); if (e) e.desc = text;
+      toast("Saved.");
+      loadLibrary();
+    }
+    state.desc = text;
+  } catch (e) { toast(e.message); }
+  renderDesc();
 }
 
 // ---- rows ----

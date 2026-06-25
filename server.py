@@ -325,8 +325,25 @@ def get_library():
             "added_at": e.get("added_at"),
             "local_sha": e.get("local_sha"),
             "downloaded": downloaded,
+            "desc": e.get("desc", ""),
         })
     return out
+
+
+class DescReq(BaseModel):
+    desc: str
+
+
+@app.post("/api/library/{repo_id:path}/describe")
+def describe_dataset(repo_id: str, req: DescReq):
+    with _lib_lock:
+        lib = load_library()
+        entry = lib_entry(lib, repo_id)
+        if entry is None:
+            raise HTTPException(404, "Not in library.")
+        entry["desc"] = req.desc.strip()
+        save_library(lib)
+    return {"repo_id": repo_id, "desc": req.desc.strip()}
 
 
 class AddReq(BaseModel):
@@ -564,6 +581,39 @@ def vault_stats(path: str):
     if not p.exists():
         raise HTTPException(404, "File not present locally — fetch it first.")
     return build_stats(get_file_table(p))
+
+
+class VaultDescReq(BaseModel):
+    path: str
+    desc: str
+
+
+@app.post("/api/vault/describe")
+def vault_describe(req: VaultDescReq):
+    import subprocess
+    manifest_path = VAULT_DIR / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(404, "Vault not configured.")
+    m = json.loads(manifest_path.read_text())
+    found = None
+    for cat in m.get("categories", {}).values():
+        for proj in cat.get("projects", {}).values():
+            for ds in proj.get("datasets", {}).values():
+                if ds.get("file") == req.path:
+                    found = ds
+    if found is None:
+        raise HTTPException(404, "Dataset not in manifest.")
+    found["desc"] = req.desc.strip()
+    manifest_path.write_text(json.dumps(m, indent=2) + "\n")
+    # commit + best-effort push so the description syncs to the repo
+    subprocess.run(["git", "-C", str(VAULT_DIR), "add", "manifest.json"],
+                   text=True, capture_output=True)
+    subprocess.run(["git", "-C", str(VAULT_DIR), "commit", "-q", "-m",
+                    f"Describe {req.path}"], text=True, capture_output=True)
+    push = subprocess.run(["git", "-C", str(VAULT_DIR), "push", "-q"],
+                          text=True, capture_output=True)
+    return {"ok": True, "path": req.path, "desc": req.desc.strip(),
+            "synced": push.returncode == 0}
 
 
 class FetchReq(BaseModel):
