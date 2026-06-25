@@ -27,6 +27,10 @@ REPOS.mkdir(parents=True, exist_ok=True)
 
 api = HfApi(token=TOKEN)
 
+# The private data-vault clone (managed by the data-vault skill). Browsable
+# here but not part of this repo — its location is local config, never committed.
+VAULT_DIR = Path(os.environ.get("DATA_VAULT_DIR", str(Path.home() / "data-vault")))
+
 # How many rows we load into memory per table. Honestly labelled in the UI
 # when a table is larger than this.
 MAX_ROWS = 100_000
@@ -243,6 +247,21 @@ def clear_cache(repo_id):
             del _table_cache[k]
 
 
+def get_file_table(abs_path):
+    """Load a single data file (used by the vault browser) as a cached table."""
+    abs_path = Path(abs_path)
+    ck = ("__file__", str(abs_path))
+    with _cache_lock:
+        if ck in _table_cache:
+            return _table_cache[ck]
+    table = {"ext": _logical_ext(abs_path), "paths": [abs_path]}
+    df, true_total, truncated = _read_dataframe(table)
+    result = {"df": df, "true_total": true_total, "truncated": truncated}
+    with _cache_lock:
+        _table_cache[ck] = result
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Cell / value serialization for JSON responses
 # ---------------------------------------------------------------------------
@@ -417,25 +436,18 @@ def list_tables(repo_id: str):
     return out
 
 
-@app.get("/api/dataset/{repo_id:path}/rows")
-def get_rows(repo_id: str, table: str, offset: int = 0, limit: int = 50, q: str = ""):
-    try:
-        data = get_table(repo_id, table)
-    except KeyError:
-        raise HTTPException(404, "Unknown table.")
+def build_rows(data, offset, limit, q):
     df = data["df"]
-
     if q:
         ql = q.lower()
         mask = df.apply(
             lambda col: col.map(lambda v: ql in str(v).lower()), axis=0
         ).any(axis=1)
         df = df[mask]
-
     total = int(len(df))
     page = df.iloc[offset:offset + limit]
     rows = [[to_jsonable(v) for v in rec] for rec in page.to_numpy()]
-    return JSONResponse({
+    return {
         "columns": list(df.columns),
         "rows": rows,
         "offset": offset,
@@ -444,17 +456,12 @@ def get_rows(repo_id: str, table: str, offset: int = 0, limit: int = 50, q: str 
         "true_total": int(data["true_total"]),
         "truncated": data["truncated"],
         "filtered": bool(q),
-    })
+    }
 
 
-@app.get("/api/dataset/{repo_id:path}/stats")
-def get_stats(repo_id: str, table: str):
+def build_stats(data):
     import pandas as pd
 
-    try:
-        data = get_table(repo_id, table)
-    except KeyError:
-        raise HTTPException(404, "Unknown table.")
     df = data["df"]
     n = len(df)
     cols = []
@@ -486,6 +493,95 @@ def get_stats(repo_id: str, table: str):
         cols.append(info)
     return {"rows": int(n), "true_total": int(data["true_total"]),
             "truncated": data["truncated"], "columns": cols}
+
+
+@app.get("/api/dataset/{repo_id:path}/rows")
+def get_rows(repo_id: str, table: str, offset: int = 0, limit: int = 50, q: str = ""):
+    try:
+        data = get_table(repo_id, table)
+    except KeyError:
+        raise HTTPException(404, "Unknown table.")
+    return JSONResponse(build_rows(data, offset, limit, q))
+
+
+@app.get("/api/dataset/{repo_id:path}/stats")
+def get_stats(repo_id: str, table: str):
+    try:
+        data = get_table(repo_id, table)
+    except KeyError:
+        raise HTTPException(404, "Unknown table.")
+    return build_stats(data)
+
+
+# ---------------------------------------------------------------------------
+# Vault — browse a private GitHub repo of datasets (the data-vault skill).
+# Structure: <category>/<project>/<dataset> with a manifest.json index.
+# ---------------------------------------------------------------------------
+def _vault_resolve(rel):
+    """Resolve a vault-relative path and refuse anything outside the vault."""
+    p = (VAULT_DIR / rel).resolve()
+    if not str(p).startswith(str(VAULT_DIR.resolve())):
+        raise HTTPException(400, "Bad path.")
+    return p
+
+
+@app.get("/api/vault/tree")
+def vault_tree():
+    manifest = VAULT_DIR / "manifest.json"
+    if not manifest.exists():
+        return {"configured": False, "dir": str(VAULT_DIR), "categories": []}
+    m = json.loads(manifest.read_text())
+    cats = []
+    for cat, cdata in sorted(m.get("categories", {}).items()):
+        projects = []
+        for proj, pdata in sorted(cdata.get("projects", {}).items()):
+            datasets = []
+            for name, ds in sorted(pdata.get("datasets", {}).items()):
+                present = (VAULT_DIR / ds["file"]).exists()
+                datasets.append({
+                    "name": name, "file": ds["file"], "format": ds.get("format"),
+                    "rows": ds.get("rows"), "bytes": ds.get("bytes"),
+                    "desc": ds.get("desc", ""), "source": ds.get("source", ""),
+                    "lfs": ds.get("lfs", False), "present": present,
+                })
+            projects.append({"name": proj, "datasets": datasets})
+        cats.append({"name": cat, "projects": projects})
+    return {"configured": True, "dir": str(VAULT_DIR),
+            "updated": m.get("updated"), "categories": cats}
+
+
+@app.get("/api/vault/rows")
+def vault_rows(path: str, offset: int = 0, limit: int = 50, q: str = ""):
+    p = _vault_resolve(path)
+    if not p.exists():
+        raise HTTPException(404, "File not present locally — fetch it first.")
+    return JSONResponse(build_rows(get_file_table(p), offset, limit, q))
+
+
+@app.get("/api/vault/stats")
+def vault_stats(path: str):
+    p = _vault_resolve(path)
+    if not p.exists():
+        raise HTTPException(404, "File not present locally — fetch it first.")
+    return build_stats(get_file_table(p))
+
+
+class FetchReq(BaseModel):
+    path: str
+
+
+@app.post("/api/vault/fetch")
+def vault_fetch(req: FetchReq):
+    import subprocess
+    _vault_resolve(req.path)  # validate
+    # restore from git (handles both regular checkout and LFS smudge)
+    r = subprocess.run(["git", "-C", str(VAULT_DIR), "checkout", "--", req.path],
+                       text=True, capture_output=True)
+    subprocess.run(["git", "-C", str(VAULT_DIR), "lfs", "pull", "--include", req.path],
+                   text=True, capture_output=True)
+    if not _vault_resolve(req.path).exists():
+        raise HTTPException(500, f"Could not fetch {req.path}: {r.stderr.strip()}")
+    return {"ok": True, "path": req.path}
 
 
 def _now():

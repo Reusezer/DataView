@@ -42,9 +42,60 @@ index — stays inside `./data`, nothing touches `~/.cache`.)
 - **Search** scans all columns; **click a row** to see the full record;
   **Stats** shows per-column types, null counts, and value summaries.
 
+## Vault (optional)
+
+Beyond Hugging Face, DataView can browse a **private GitHub repo you use as your
+own dataset store** — handy for keeping project data organized in one place
+without making it public. Point it at a local clone:
+
+```bash
+DATA_VAULT_DIR=~/data-vault ./run.sh      # default is ~/data-vault
+```
+
+It expects the repo to be organized by **category / project / dataset** with a
+`manifest.json` index at the root:
+
+```
+<vault>/
+  manifest.json
+  <category>/<project>/<dataset>.jsonl
+```
+
+`manifest.json` schema:
+
+```json
+{
+  "version": 1,
+  "updated": "2026-06-25",
+  "categories": {
+    "research": {
+      "projects": {
+        "my-project": {
+          "datasets": {
+            "examples": {
+              "file": "research/my-project/examples.jsonl",
+              "format": "jsonl", "rows": 320, "bytes": 51234,
+              "lfs": false, "source": "", "desc": "short description",
+              "added": "2026-06-25"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The **Vault** section in the sidebar lists everything by category → project →
+dataset; click to view. Datasets not present locally (e.g. after a light clone,
+or Git LFS files) show a **fetch** action that restores them from the remote.
+The vault location is read from `DATA_VAULT_DIR` only — nothing about your
+private repo is stored in this project.
+
 ## Notes
 
-- Reads `.parquet`, `.jsonl`, `.json`, `.csv`, `.tsv`. Sharded parquet
+- Reads `.parquet`, `.jsonl`, `.json` (incl. nested record lists and columnar
+  dicts), `.csv`, `.tsv`, and gzipped variants. Sharded parquet
   (`train-00000-of-00010.parquet`) is grouped into one table.
 - Tables are loaded into memory, capped at 100,000 rows. When a table is
   larger, the UI says so and search/stats run on the loaded sample.

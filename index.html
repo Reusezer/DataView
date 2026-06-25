@@ -51,6 +51,24 @@
   .lib .name { font-size: 12.5px; word-break: break-all; }
   .lib .sub { font-size: 11px; color: var(--muted); }
 
+  .seclabel { font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted); margin: 4px 0 -6px; font-weight: 600; }
+
+  /* vault tree */
+  .vault { display: flex; flex-direction: column; }
+  .vcat { font-size: 12.5px; font-weight: 600; margin: 10px 0 2px; }
+  .vproj { font-size: 11px; color: var(--muted); margin: 5px 0 2px 8px;
+    text-transform: uppercase; letter-spacing: .06em; }
+  .vds { padding: 5px 8px 5px 16px; margin-left: 8px; border-left: 1px solid var(--line);
+    cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+  .vds:hover { background: var(--bg-soft); }
+  .vds.active { border-left: 2px solid var(--line-strong); background: #f0f0f0; margin-left: 7px; }
+  .vds .vname { font-size: 12.5px; }
+  .vds .vmeta { font-size: 10.5px; color: var(--muted); }
+  .vds.absent .vname { color: var(--muted); }
+  .vds .tag { font-size: 9.5px; border: 1px solid var(--line-strong); padding: 0 4px;
+    margin-left: 6px; text-transform: uppercase; letter-spacing: .04em; }
+
   /* main */
   main { overflow: hidden; display: flex; flex-direction: column; }
   .topbar { padding: 16px 22px; border-bottom: 1px solid var(--line); }
@@ -122,9 +140,16 @@
   <h1>DataView</h1>
   <div class="add">
     <input id="repoInput" placeholder="owner/dataset-name" autocomplete="off" spellcheck="false">
-    <button id="addBtn">Add dataset</button>
+    <button id="addBtn">Add from Hugging Face</button>
   </div>
-  <ul class="lib" id="lib"></ul>
+  <div>
+    <div class="seclabel">Hugging Face</div>
+    <ul class="lib" id="lib"></ul>
+  </div>
+  <div id="vaultSection">
+    <div class="seclabel">Vault</div>
+    <div class="vault" id="vault"></div>
+  </div>
 </aside>
 
 <main>
@@ -173,7 +198,16 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const state = { repo: null, table: null, columns: [], offset: 0, limit: 50, q: "", rows: [] };
+const state = { source: "hf", repo: null, table: null, vaultPath: null,
+                columns: [], offset: 0, limit: 50, q: "", rows: [] };
+
+// show/hide controls that only make sense for one source
+function setControls(source) {
+  const hfOnly = source !== "hf";
+  $("#tableSel").style.display = hfOnly ? "none" : "";
+  $("#refreshBtn").style.display = hfOnly ? "none" : "";
+  $("#removeBtn").style.display = hfOnly ? "none" : "";
+}
 
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.style.display = "block";
@@ -216,13 +250,17 @@ $("#addBtn").onclick = async () => {
 };
 $("#repoInput").addEventListener("keydown", e => { if (e.key === "Enter") $("#addBtn").click(); });
 
-// ---- open dataset ----
+// ---- open dataset (Hugging Face) ----
 async function openDataset(repo) {
-  state.repo = repo; state.q = ""; state.offset = 0;
+  state.source = "hf"; state.repo = repo; state.vaultPath = null;
+  state.q = ""; state.offset = 0;
+  setControls("hf");
+  renderVaultActive();
   $("#searchInput").value = "";
   $("#main-empty").style.display = "none";
   $("#main-view").style.display = "flex";
   $("#ds-title").textContent = repo;
+  $("#ds-meta").textContent = "";
   $("#ds-banner").innerHTML = "";
   $("#tableWrap").innerHTML = `<div class="empty">Loading…</div>`;
   await loadLibrary();
@@ -282,12 +320,86 @@ $("#removeBtn").onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
+// ---- vault ----
+function fmtBytes(b) {
+  if (!b && b !== 0) return "";
+  return b < 1e6 ? (b / 1e3).toFixed(0) + " KB" : (b / 1e6).toFixed(1) + " MB";
+}
+async function loadVault() {
+  let tree;
+  try { tree = await api("/api/vault/tree"); }
+  catch (e) { return; }
+  const box = $("#vault");
+  if (!tree.configured) {
+    box.innerHTML = `<div class="sub" style="font-size:11px">Not set up. See the data-vault skill.</div>`;
+    return;
+  }
+  if (!tree.categories.length) { box.innerHTML = `<div class="sub" style="font-size:11px">Empty.</div>`; return; }
+  let h = "";
+  for (const cat of tree.categories) {
+    h += `<div class="vcat">${escapeHtml(cat.name)}</div>`;
+    for (const proj of cat.projects) {
+      h += `<div class="vproj">${escapeHtml(proj.name)}</div>`;
+      for (const ds of proj.datasets) {
+        const meta = [ds.rows != null ? ds.rows.toLocaleString() + " rows" : ds.format,
+                      fmtBytes(ds.bytes)].filter(Boolean).join(" · ");
+        const tag = ds.present ? "" : `<span class="tag">fetch</span>`;
+        h += `<div class="vds${ds.present ? "" : " absent"}" data-path="${escapeHtml(ds.file)}" data-present="${ds.present}">
+          <span class="vname">${escapeHtml(ds.name)}${tag}</span>
+          <span class="vmeta">${escapeHtml(meta)}</span></div>`;
+      }
+    }
+  }
+  box.innerHTML = h;
+  box.querySelectorAll(".vds").forEach(el => el.onclick = () => onVaultClick(el));
+  renderVaultActive();
+}
+function renderVaultActive() {
+  $("#vault").querySelectorAll(".vds").forEach(el =>
+    el.classList.toggle("active", state.source === "vault" && el.dataset.path === state.vaultPath));
+}
+async function onVaultClick(el) {
+  const path = el.dataset.path;
+  if (el.dataset.present !== "true") {
+    el.querySelector(".vname").innerHTML = el.querySelector(".vname").textContent + ` <span class="tag">fetching…</span>`;
+    try {
+      await api("/api/vault/fetch", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }) });
+    } catch (e) { toast(e.message); await loadVault(); return; }
+    await loadVault();
+  }
+  openVaultDataset(path);
+}
+function openVaultDataset(path) {
+  state.source = "vault"; state.vaultPath = path; state.repo = null;
+  state.q = ""; state.offset = 0; $("#searchInput").value = "";
+  setControls("vault");
+  loadLibrary();           // clear HF active highlight
+  renderVaultActive();
+  $("#main-empty").style.display = "none";
+  $("#main-view").style.display = "flex";
+  $("#ds-title").textContent = path;
+  $("#ds-meta").textContent = "From the vault";
+  $("#ds-banner").innerHTML = "";
+  $("#ds-note").textContent = "";
+  loadRows();
+}
+
 // ---- rows ----
+function rowsUrl() {
+  if (state.source === "vault")
+    return `/api/vault/rows?${new URLSearchParams({ path: state.vaultPath, offset: state.offset, limit: state.limit, q: state.q })}`;
+  return `/api/dataset/${state.repo}/rows?${new URLSearchParams({ table: state.table, offset: state.offset, limit: state.limit, q: state.q })}`;
+}
+function statsUrl() {
+  if (state.source === "vault") return `/api/vault/stats?path=${encodeURIComponent(state.vaultPath)}`;
+  return `/api/dataset/${state.repo}/stats?table=${encodeURIComponent(state.table)}`;
+}
+
 async function loadRows() {
   $("#tableWrap").innerHTML = `<div class="empty">Loading…</div>`;
-  const p = new URLSearchParams({ table: state.table, offset: state.offset, limit: state.limit, q: state.q });
   let data;
-  try { data = await api(`/api/dataset/${state.repo}/rows?${p}`); }
+  try { data = await api(rowsUrl()); }
   catch (e) { $("#tableWrap").innerHTML = `<div class="empty">${e.message}</div>`; return; }
   state.columns = data.columns; state.rows = data.rows; state.matched = data.matched;
   renderTable(data); renderPager(data);
@@ -352,7 +464,7 @@ $("#drawerClose").onclick = closeDrawer; $("#drawerBg").onclick = closeDrawer;
 // ---- stats ----
 $("#statsBtn").onclick = async () => {
   let s;
-  try { s = await api(`/api/dataset/${state.repo}/stats?table=${encodeURIComponent(state.table)}`); }
+  try { s = await api(statsUrl()); }
   catch (e) { toast(e.message); return; }
   let h = `<div class="kv"><div class="k">${s.rows.toLocaleString()} rows loaded`
     + (s.truncated ? ` (of ${s.true_total.toLocaleString()} total — stats on the loaded sample)` : "")
@@ -373,6 +485,7 @@ $("#statsBtn").onclick = async () => {
 };
 
 loadLibrary();
+loadVault();
 </script>
 </body>
 </html>
