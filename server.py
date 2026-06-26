@@ -295,7 +295,7 @@ def to_jsonable(v):
 # HTTP API (FastAPI)
 # ---------------------------------------------------------------------------
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 app = FastAPI(title="DataView")
@@ -512,6 +512,22 @@ def build_stats(data):
             "truncated": data["truncated"], "columns": cols}
 
 
+def build_jsonl(data):
+    """The loaded table as JSONL text — one JSON object per row."""
+    df = data["df"]
+    cols = list(df.columns)
+    lines = [json.dumps({c: to_jsonable(v) for c, v in zip(cols, rec)}, ensure_ascii=False)
+             for rec in df.to_numpy()]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _jsonl_response(data, filename):
+    return Response(
+        build_jsonl(data), media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/dataset/{repo_id:path}/rows")
 def get_rows(repo_id: str, table: str, offset: int = 0, limit: int = 50, q: str = ""):
     try:
@@ -519,6 +535,16 @@ def get_rows(repo_id: str, table: str, offset: int = 0, limit: int = 50, q: str 
     except KeyError:
         raise HTTPException(404, "Unknown table.")
     return JSONResponse(build_rows(data, offset, limit, q))
+
+
+@app.get("/api/dataset/{repo_id:path}/download")
+def download_hf(repo_id: str, table: str):
+    try:
+        data = get_table(repo_id, table)
+    except KeyError:
+        raise HTTPException(404, "Unknown table.")
+    name = f"{repo_id.split('/')[-1]}__{Path(table).stem}.jsonl"
+    return _jsonl_response(data, name)
 
 
 @app.get("/api/dataset/{repo_id:path}/stats")
@@ -581,6 +607,14 @@ def vault_stats(path: str):
     if not p.exists():
         raise HTTPException(404, "File not present locally — fetch it first.")
     return build_stats(get_file_table(p))
+
+
+@app.get("/api/vault/download")
+def vault_download(path: str):
+    p = _vault_resolve(path)
+    if not p.exists():
+        raise HTTPException(404, "File not present locally — fetch it first.")
+    return _jsonl_response(get_file_table(p), f"{p.stem}.jsonl")
 
 
 class VaultDescReq(BaseModel):

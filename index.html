@@ -175,6 +175,7 @@
         <button id="searchBtn">Search</button>
         <button id="clearBtn">Clear</button>
         <span class="spacer" style="flex:1"></span>
+        <button id="downloadBtn">Download JSONL</button>
         <button id="statsBtn">Stats</button>
         <button id="refreshBtn">Check / refresh</button>
         <button id="removeBtn">Remove</button>
@@ -520,6 +521,21 @@ function openDrawer(i) {
 }
 function closeDrawer() { $("#drawer").style.display = "none"; $("#drawerBg").style.display = "none"; }
 $("#drawerClose").onclick = closeDrawer; $("#drawerBg").onclick = closeDrawer;
+
+// ---- download JSONL ----
+$("#downloadBtn").onclick = () => {
+  let url;
+  if (state.source === "vault") {
+    if (!state.vaultPath) return;
+    url = `/api/vault/download?path=${encodeURIComponent(state.vaultPath)}`;
+  } else {
+    if (!state.repo || !state.table) return;
+    url = `/api/dataset/${state.repo}/download?table=${encodeURIComponent(state.table)}`;
+  }
+  const a = document.createElement("a");
+  a.href = url; a.download = "";
+  document.body.appendChild(a); a.click(); a.remove();
+};
 
 // ---- stats ----
 $("#statsBtn").onclick = async () => {
