@@ -674,8 +674,19 @@ def _now():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
+def _prewarm():
+    # Warm the heavy data libs in the background so the FIRST dataset you open
+    # is snappy — the server already serves the UI while this runs.
+    try:
+        import pandas, pyarrow  # noqa: F401
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    import threading
     import uvicorn
+    threading.Thread(target=_prewarm, daemon=True).start()
     port = int(os.environ.get("PORT", "7860"))
     print(f"\n  DataView  →  http://127.0.0.1:{port}\n")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
