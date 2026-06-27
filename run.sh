@@ -23,5 +23,5 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-echo "Using: $PY"
-exec "$PY" server.py
+echo "Using: $PY" >&2
+exec "$PY" server.py "$@"

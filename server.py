@@ -683,7 +683,31 @@ def _prewarm():
         pass
 
 
+def _cli_row(args):
+    """Print row(s) by index — the same 0-based # shown in the viewer.
+    Usage: server.py row <path> <N> [count].  <path> is absolute or vault-relative."""
+    if len(args) < 2:
+        print("usage: server.py row <path> <N> [count]"); return
+    path, n = args[0], int(args[1])
+    cnt = int(args[2]) if len(args) > 2 else 1
+    p = Path(path)
+    if not p.exists():
+        p = VAULT_DIR / path
+    if not p.exists():
+        print(f"not found: {path}"); return
+    df = get_file_table(p)["df"]
+    if not (0 <= n < len(df)):
+        print(f"row #{n} out of range (file has {len(df)} rows)"); return
+    for i in range(n, min(n + cnt, len(df))):
+        rec = {c: to_jsonable(v) for c, v in zip(df.columns, df.iloc[i])}
+        print(json.dumps({"#": i, **rec}, ensure_ascii=False))
+
+
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "row":
+        _cli_row(sys.argv[2:]); sys.exit()
+
     import threading
     import uvicorn
     threading.Thread(target=_prewarm, daemon=True).start()

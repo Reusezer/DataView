@@ -39,8 +39,19 @@ index — stays inside `./data`, nothing touches `~/.cache`.)
 - **Check / refresh** compares your local copy against Hugging Face and pulls
   the update if the commit changed.
 - Pick a **table** (each data file in the repo) from the dropdown.
-- **Search** scans all columns; **click a row** to see the full record;
-  **Stats** shows per-column types, null counts, and value summaries.
+- **Search** scans all columns; type **`#42`** to jump to a row by its index.
+  **Click a row** to see the full record; **Stats** shows per-column types,
+  null counts, and value summaries.
+
+### Look up a row from the terminal
+
+The `#N` index (shown in the viewer's `#` column, 0-based) can be fetched
+headlessly — handy for scripts and agents:
+
+```bash
+./run.sh row <path> <N> [count]      # prints the row(s) as JSON
+# <path> is absolute or vault-relative; row 0 is the first record
+```
 
 ## Vault (optional)
 
