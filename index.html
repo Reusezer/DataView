@@ -111,6 +111,8 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
   }
   tbody tr:hover { background: var(--bg-soft); cursor: pointer; }
+  tbody tr.jump td { background: #eee; }
+  tbody tr.jump td.idx { border-left: 2px solid var(--line-strong); }
   td.idx { color: var(--muted); text-align: right; user-select: none; width: 1%;
     font-family: ui-monospace, monospace; }
   .null { color: #bbb; font-style: italic; }
@@ -171,7 +173,7 @@
       <div id="ds-banner"></div>
       <div class="controls">
         <select id="tableSel"></select>
-        <input class="search" id="searchInput" placeholder="search all columns…">
+        <input class="search" id="searchInput" placeholder="search all columns…  (or #42 to jump to a row)">
         <button id="searchBtn">Search</button>
         <button id="clearBtn">Clear</button>
         <span class="spacer" style="flex:1"></span>
@@ -209,7 +211,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const state = { source: "hf", repo: null, table: null, vaultPath: null,
-                columns: [], offset: 0, limit: 50, q: "", rows: [], desc: "" };
+                columns: [], offset: 0, limit: 50, q: "", rows: [], desc: "", gotoRow: null };
 let libCache = [];          // HF library entries (with desc)
 let vaultIndex = {};        // vault file path -> dataset entry (with desc)
 
@@ -464,6 +466,8 @@ async function loadRows() {
   catch (e) { $("#tableWrap").innerHTML = `<div class="empty">${e.message}</div>`; return; }
   state.columns = data.columns; state.rows = data.rows; state.matched = data.matched;
   renderTable(data); renderPager(data);
+  if (state.gotoRow != null && !data.rows.length)
+    toast(`No row #${state.gotoRow} (only ${(data.true_total || 0).toLocaleString()} rows)`);
 }
 
 function fmtCell(v) {
@@ -479,7 +483,9 @@ function renderTable(data) {
   for (const c of data.columns) h += `<th>${escapeHtml(c)}</th>`;
   h += "</tr></thead><tbody>";
   data.rows.forEach((row, i) => {
-    h += `<tr data-i="${i}"><td class="idx">${state.offset + i}</td>`;
+    const rowIdx = state.offset + i;
+    const cls = (state.gotoRow != null && rowIdx === state.gotoRow) ? ' class="jump"' : "";
+    h += `<tr data-i="${i}"${cls}><td class="idx">${rowIdx}</td>`;
     for (const v of row) h += `<td>${fmtCell(v)}</td>`;
     h += "</tr>";
   });
@@ -501,9 +507,15 @@ $("#prevBtn").onclick = () => { state.offset = Math.max(0, state.offset - state.
 $("#nextBtn").onclick = () => { state.offset += state.limit; loadRows(); };
 $("#pageSize").onchange = e => { state.limit = +e.target.value; state.offset = 0; loadRows(); };
 
-$("#searchBtn").onclick = () => { state.q = $("#searchInput").value.trim(); state.offset = 0; loadRows(); };
+$("#searchBtn").onclick = () => {
+  const raw = $("#searchInput").value.trim();
+  const m = raw.match(/^#(\d+)$/);          // "#42" -> jump to row 42
+  if (m) { state.q = ""; state.gotoRow = +m[1]; state.offset = +m[1]; }
+  else { state.q = raw; state.gotoRow = null; state.offset = 0; }
+  loadRows();
+};
 $("#searchInput").addEventListener("keydown", e => { if (e.key === "Enter") $("#searchBtn").click(); });
-$("#clearBtn").onclick = () => { state.q = ""; $("#searchInput").value = ""; state.offset = 0; loadRows(); };
+$("#clearBtn").onclick = () => { state.q = ""; state.gotoRow = null; $("#searchInput").value = ""; state.offset = 0; loadRows(); };
 
 // ---- drawer (row detail) ----
 function openDrawer(i) {
